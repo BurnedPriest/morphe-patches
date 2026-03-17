@@ -49,6 +49,9 @@ import app.morphe.extension.shared.ui.SheetBottomDialog;
 import app.morphe.extension.youtube.patches.VideoInformation;
 import app.morphe.extension.youtube.patches.components.PlaybackSpeedMenuFilter;
 import app.morphe.extension.youtube.settings.Settings;
+import app.morphe.extension.youtube.shared.ChildrenChangeEventArgs;
+import app.morphe.extension.youtube.shared.LayoutChangeEventArgs;
+import app.morphe.extension.youtube.shared.PlayerOverlays;
 import app.morphe.extension.youtube.shared.PlayerType;
 import kotlin.Unit;
 import kotlin.jvm.functions.Function1;
@@ -96,6 +99,14 @@ public class CustomPlaybackSpeedPatch {
     private static final float customPlaybackSpeedsMin, customPlaybackSpeedsMax;
 
     /**
+     * Native YouTube hardcodes the hold-to-speed badge text to 2x.
+     * Override that overlay text at runtime when the configured hold speed differs.
+     */
+    private static final String DEFAULT_TAP_AND_HOLD_OVERLAY_TEXT = "2x";
+    private static final String DEFAULT_TAP_AND_HOLD_OVERLAY_TEXT_WITH_DECIMAL = "2.0x";
+    private static final String TAP_AND_HOLD_OVERLAY_TEXT;
+
+    /**
      * The last time the old playback menu was forcefully called.
      */
     private static volatile long lastTimeOldPlaybackMenuInvoked;
@@ -127,6 +138,22 @@ public class CustomPlaybackSpeedPatch {
             showInvalidCustomSpeedToast();
             TAP_AND_HOLD_SPEED = Settings.SPEED_TAP_AND_HOLD.resetToDefault();
         }
+        TAP_AND_HOLD_OVERLAY_TEXT = formatTapAndHoldOverlayText(TAP_AND_HOLD_SPEED);
+
+        if (!DISABLE_TAP_AND_HOLD_SPEED && TAP_AND_HOLD_SPEED != 2.0f) {
+            PlayerOverlays.onInflate.addObserver((ViewGroup overlaysLayout) -> {
+                updateTapAndHoldSpeedOverlayText(overlaysLayout);
+                return Unit.INSTANCE;
+            });
+            PlayerOverlays.onChildrenChange.addObserver((ChildrenChangeEventArgs args) -> {
+                updateTapAndHoldSpeedOverlayText(args.getOverlaysLayout());
+                return Unit.INSTANCE;
+            });
+            PlayerOverlays.onLayoutChange.addObserver((LayoutChangeEventArgs args) -> {
+                updateTapAndHoldSpeedOverlayText(args.getOverlaysLayout());
+                return Unit.INSTANCE;
+            });
+        }
 
         customPlaybackSpeeds = loadCustomSpeeds();
         customPlaybackSpeedsMin = customPlaybackSpeeds[0];
@@ -154,6 +181,29 @@ public class CustomPlaybackSpeedPatch {
      */
     public static float getTapAndHoldSpeed() {
         return TAP_AND_HOLD_SPEED;
+    }
+
+    private static void updateTapAndHoldSpeedOverlayText(ViewGroup overlaysLayout) {
+        try {
+            rewriteTapAndHoldSpeedOverlayText(overlaysLayout);
+        } catch (Exception ex) {
+            Logger.printException(() -> "updateTapAndHoldSpeedOverlayText failure", ex);
+        }
+    }
+
+    private static void rewriteTapAndHoldSpeedOverlayText(ViewGroup parent) {
+        for (int i = 0, childCount = parent.getChildCount(); i < childCount; i++) {
+            View child = parent.getChildAt(i);
+            if (child instanceof TextView textView) {
+                CharSequence text = textView.getText();
+                if (DEFAULT_TAP_AND_HOLD_OVERLAY_TEXT.contentEquals(text)
+                        || DEFAULT_TAP_AND_HOLD_OVERLAY_TEXT_WITH_DECIMAL.contentEquals(text)) {
+                    textView.setText(TAP_AND_HOLD_OVERLAY_TEXT);
+                }
+            } else if (child instanceof ViewGroup childGroup) {
+                rewriteTapAndHoldSpeedOverlayText(childGroup);
+            }
+        }
     }
 
     private static void showInvalidCustomSpeedToast() {
@@ -530,6 +580,13 @@ public class CustomPlaybackSpeedPatch {
      */
     private static String formatSpeedStringX(float speed) {
         return speedFormatter.format(speed) + 'x';
+    }
+
+    private static String formatTapAndHoldOverlayText(float speed) {
+        NumberFormat formatter = NumberFormat.getNumberInstance();
+        formatter.setMinimumFractionDigits(0);
+        formatter.setMaximumFractionDigits(2);
+        return formatter.format(speed) + 'x';
     }
 
     /**
